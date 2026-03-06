@@ -1,0 +1,266 @@
+/* ─── Automation Panel Items & Forms ──────────────────────────────────────── */
+/* Add these rules to src/styles/main.css (or import this file from main.css)  */
+
+/* Empty state */
+.auto-empty {
+    padding: 12px 8px;
+    color: var(--text-secondary, #888);
+    font-size: 0.78rem;
+    text-align: center;
+    font-style: italic;
+}
+
+/* List item row */
+.auto-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 6px 6px 6px 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    min-height: 36px;
+}
+.auto-item:hover {
+    background: rgba(255,255,255,0.03);
+}
+.auto-item-disabled {
+    opacity: 0.45;
+}
+
+/* Toggle button (●/○) */
+.auto-toggle {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.7rem;
+    padding: 2px 4px;
+    color: var(--accent, #00d4ff);
+    flex-shrink: 0;
+    margin-top: 2px;
+    line-height: 1;
+}
+.auto-item-disabled .auto-toggle {
+    color: #555;
+}
+
+/* Info block */
+.auto-item-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.auto-item-name {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-primary, #e8e8e8);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.auto-item-sub {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    font-size: 0.72rem;
+    color: var(--text-secondary, #888);
+}
+.auto-pattern {
+    font-family: 'JetBrains Mono', monospace;
+    color: #7ec8e3;
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.auto-arrow {
+    color: #555;
+}
+.auto-action {
+    font-family: 'JetBrains Mono', monospace;
+    color: #a8d8a8;
+    max-width: 100px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Badges */
+.auto-badge {
+    background: rgba(255,255,255,0.1);
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-size: 0.65rem;
+    color: #aaa;
+    white-space: nowrap;
+}
+.auto-badge-script  { background: rgba(180,100,255,0.2); color: #c78fff; }
+.auto-badge-notify  { background: rgba(255,200,50,0.2);  color: #ffe566; }
+.auto-badge-gag     { background: rgba(255,80,80,0.2);   color: #ff8888; }
+.auto-badge-running { background: rgba(50,200,100,0.2);  color: #5fd98a; }
+
+/* Row action buttons (edit / delete / run) */
+.auto-item-btns {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+    align-self: flex-start;
+    margin-top: 1px;
+}
+.auto-edit-btn,
+.auto-del-btn,
+.auto-run-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 5px;
+    font-size: 0.75rem;
+    border-radius: 3px;
+    color: #666;
+    transition: color 0.15s, background 0.15s;
+    line-height: 1.4;
+}
+.auto-edit-btn:hover { color: #00d4ff; background: rgba(0,212,255,0.1); }
+.auto-del-btn:hover  { color: #ff5555; background: rgba(255,85,85,0.1); }
+.auto-run-btn:hover  { color: #50fa7b; background: rgba(80,250,123,0.1); }
+
+/* ─── Inline Add/Edit form ──────────────────────────────────────────────────── */
+
+.auto-form {
+    background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(0,212,255,0.25);
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.auto-form-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--accent, #00d4ff);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 2px;
+}
+
+.auto-form-row {
+    display: flex;
+    gap: 6px;
+}
+.auto-form-row-select {
+    align-items: center;
+}
+
+.auto-input {
+    flex: 1;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    color: #e8e8e8;
+    font-size: 0.78rem;
+    padding: 5px 8px;
+    font-family: inherit;
+    outline: none;
+    min-width: 0;
+}
+.auto-input:focus {
+    border-color: rgba(0,212,255,0.5);
+    background: rgba(0,212,255,0.05);
+}
+
+.auto-label {
+    font-size: 0.72rem;
+    color: #888;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.auto-select {
+    flex: 1;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    color: #e8e8e8;
+    font-size: 0.78rem;
+    padding: 5px 8px;
+    outline: none;
+}
+.auto-select:focus {
+    border-color: rgba(0,212,255,0.5);
+}
+
+.auto-textarea {
+    flex: 1;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    color: #e8e8e8;
+    font-size: 0.75rem;
+    padding: 5px 8px;
+    font-family: 'JetBrains Mono', monospace;
+    resize: vertical;
+    min-height: 56px;
+    outline: none;
+}
+.auto-textarea:focus {
+    border-color: rgba(0,212,255,0.5);
+}
+.auto-textarea-tall {
+    min-height: 100px;
+}
+
+.auto-form-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.auto-check {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.75rem;
+    color: #aaa;
+    cursor: pointer;
+    user-select: none;
+}
+.auto-check input[type=checkbox] {
+    accent-color: #00d4ff;
+    cursor: pointer;
+}
+
+.auto-form-btns {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+    margin-top: 2px;
+}
+.auto-save-btn {
+    background: rgba(0,212,255,0.15);
+    border: 1px solid rgba(0,212,255,0.4);
+    color: #00d4ff;
+    border-radius: 4px;
+    padding: 4px 14px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.auto-save-btn:hover {
+    background: rgba(0,212,255,0.28);
+}
+.auto-cancel-btn {
+    background: none;
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #888;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: color 0.15s;
+}
+.auto-cancel-btn:hover {
+    color: #ccc;
+}
