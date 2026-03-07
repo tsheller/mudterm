@@ -18,6 +18,7 @@ import { automationPanel } from './ui/automation-panel.js';
 window.automationPanel = automationPanel;
 import { logger } from './core/logger.js';
 import { cloudSync } from './core/cloud-sync.js';
+import { screenReader, injectScreenReaderSettings } from './core/screen-reader.js';
 
 let activeMode = null;
 
@@ -1268,11 +1269,14 @@ function setupConnectionMode() {
     const settingsModal = document.getElementById('modal-settings');
     if (settingsModal) {
         new MutationObserver(() => {
-            if (settingsModal.classList.contains('active')) injectToggle();
+            if (settingsModal.classList.contains('active')) {
+                injectToggle();
+                injectScreenReaderSettings();
+            }
         }).observe(settingsModal, { attributes: true, attributeFilter: ['class'] });
     }
     document.addEventListener('click', e => {
-        if (e.target.closest('#btn-settings')) setTimeout(injectToggle, 0);
+        if (e.target.closest('#btn-settings')) setTimeout(() => { injectToggle(); injectScreenReaderSettings(); }, 0);
     });
 }
 
