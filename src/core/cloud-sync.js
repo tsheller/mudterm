@@ -192,40 +192,53 @@ async function syncConnections(setId, forcePull = false) {
     const pullOnly = forcePull || !isDirty();
 
     if (pullOnly) {
-        // No local changes — just pull cloud state, don't risk overwriting
+        // No local changes — pull cloud state and merge, preserving local-only connections.
         console.log('[CloudSync] Connections: pull-only (no local changes)');
         const data = await api('POST', API_CONFIG.MUDTERM.CONNECTIONS_SYNC(setId), {
             connections: [],
             pullOnly: true
         });
 
-        if (data.connections && Array.isArray(data.connections) && data.connections.length > 0) {
-            state.set('connections', data.connections);
+        if (data.connections && Array.isArray(data.connections)) {
+            const cloudIds = new Set(data.connections.map(c => c.id));
+            // Keep any connection not known to the cloud (truly local)
+            const localOnly = state.get('connections', []).filter(c => !cloudIds.has(c.id));
+            state.set('connections', [...localOnly, ...data.connections]);
             storage.save();
+            // Update cloud caches so renderConnections can divide correctly
+            _cloudConnections = data.connections;
+            _cloudIds = cloudIds;
         }
         return data;
     }
 
-    // Local changes exist — bidirectional sync with timestamps
-    // The server will merge per-item by updatedAt so stale items
-    // from this client cannot overwrite newer server items.
+    // Local changes exist — bidirectional sync with timestamps.
+    // Only send cloud-tracked connections to the server; local-only stay untouched.
     console.log('[CloudSync] Connections: bidirectional (local changes detected)');
-    const localConnections = state.get('connections', []);
+    const allConnections = state.get('connections', []);
+
+    // Split: connections the server already knows about vs truly local-only
+    const knownToCloud = allConnections.filter(c => _cloudIds.has(c.id) || _cloudIds.size === 0);
+    const localOnly    = allConnections.filter(c => !_cloudIds.has(c.id) && _cloudIds.size > 0);
 
     // Stamp connections that don't have updatedAt
     const now = new Date().toISOString();
-    for (const conn of localConnections) {
+    for (const conn of knownToCloud) {
         if (!conn.updatedAt) conn.updatedAt = now;
     }
 
     const data = await api('POST', API_CONFIG.MUDTERM.CONNECTIONS_SYNC(setId), {
-        connections: localConnections,
+        connections: knownToCloud,
         lastSync: localStorage.getItem(API_CONFIG.STORAGE_KEYS.LAST_SYNC) || null
     });
 
     if (data.connections && Array.isArray(data.connections)) {
-        state.set('connections', data.connections);
+        // Merge: local-only connections stay, cloud connections come from server response
+        state.set('connections', [...localOnly, ...data.connections]);
         storage.save();
+        // Update cloud caches so renderConnections can divide correctly
+        _cloudConnections = data.connections;
+        _cloudIds = new Set(data.connections.map(c => c.id));
     }
 
     return data;
@@ -569,6 +582,13 @@ export const cloudSync = {
         authToken = null;
         authUser = null;
         activeDeviceSet = null;
+        // Remove cloud-only connections from local state — locally-moved connections
+        // were already written without a cloud ID so they'll be unaffected.
+        const localOnly = state.get('connections', []).filter(c => !_cloudIds.has(c.id));
+        state.set('connections', localOnly);
+        storage.save();
+        _cloudConnections = [];
+        _cloudIds.clear();
         localStorage.removeItem(API_CONFIG.STORAGE_KEYS.AUTH_TOKEN);
         localStorage.removeItem(API_CONFIG.STORAGE_KEYS.AUTH_USER);
         localStorage.removeItem(API_CONFIG.STORAGE_KEYS.ACTIVE_DEVICE_SET);

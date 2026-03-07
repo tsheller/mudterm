@@ -72,6 +72,10 @@ function renderConnections() {
         grid.appendChild(localHdr);
         localOnly.forEach(conn => grid.appendChild(buildConnectionCard(conn, { cloud: false, showSync: true })));
     } else {
+        const localHdr = document.createElement('div');
+        localHdr.className = 'connection-section-header';
+        localHdr.innerHTML = `<span class="section-label">📱 Device</span><span class="section-count">${allLocal.length}</span><div class="section-line"></div>`;
+        grid.appendChild(localHdr);
         allLocal.forEach(conn => grid.appendChild(buildConnectionCard(conn, { cloud: false })));
     }
 }
@@ -843,7 +847,7 @@ function setupCloudUI() {
     }
 
     events.on('cloud:signed-in', () => { renderCloudBar(); updateSettingsAuthUI(cloudSync.getUser()); });
-    events.on('cloud:signed-out', () => { renderCloudBar(); updateSettingsAuthUI(null); });
+    events.on('cloud:signed-out', () => { renderCloudBar(); updateSettingsAuthUI(null); renderConnections(); });
     events.on('cloud:sync-start', () => { const el = document.getElementById('cloud-sync-indicator'); if (el) el.textContent = '☁ Syncing...'; });
     events.on('cloud:sync-complete', () => {
         const el = document.getElementById('cloud-sync-indicator');
