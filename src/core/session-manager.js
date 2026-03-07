@@ -605,11 +605,11 @@ class SessionManager {
      * Open a new session for a connection + optional profile
      * @returns {string} sessionId
      */
-    createSession(connectionConfig, profileConfig = null) {
+    createSession(connectionConfig, profileConfig = null, terminalOpts = {}) {
         const sessionId = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
         const session = new Session(sessionId, connectionConfig, profileConfig);
-        session.init(this._terminalParent);
+        session.init(this._terminalParent, terminalOpts);
 
         this.sessions.set(sessionId, session);
 

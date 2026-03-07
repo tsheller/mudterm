@@ -123,7 +123,7 @@ function connect(connectionId, profileId = null, cloudConn = null) {
     if (!conn) return;
     const profile = profileId ? (conn.profiles || []).find(p => p.id === profileId) : null;
     showTerminal();
-    sessionManager.createSession(conn, profile);
+    sessionManager.createSession(conn, profile, getStoredTerminalOpts(conn.id));
 }
 
 function updateConnectionStatus(connected, name = '') {
@@ -942,6 +942,26 @@ function setupTheme() {
 // LIVE SETTINGS — Apply display/input changes to active terminal sessions
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/**
+ * Build xterm-ready options from a stored display config for a given connection.
+ * Used both at session creation and when restoring on switch.
+ */
+function getStoredTerminalOpts(connId) {
+    try {
+        const raw = localStorage.getItem('mudterm_display_' + connId);
+        if (!raw) return {};
+        const cfg = JSON.parse(raw);
+        const opts = {};
+        if (cfg.fontFamily    != null) opts.fontFamily    = cfg.fontFamily + ", 'Share Tech Mono', monospace";
+        if (cfg.fontSize      != null) opts.fontSize      = parseFloat(cfg.fontSize);
+        if (cfg.lineHeight    != null) opts.lineHeight    = parseFloat(cfg.lineHeight);
+        if (cfg.letterSpacing != null) opts.letterSpacing = parseFloat(cfg.letterSpacing);
+        if (cfg.scrollback    != null) opts.scrollback    = parseInt(cfg.scrollback, 10);
+        return opts;
+    } catch (e) { return {}; }
+}
+
+
 function applyDisplayToSession(session, cfg) {
     const t = session.terminal;
     if (!t || typeof t.options !== 'object') return;
@@ -1043,7 +1063,9 @@ function setupLiveSettings() {
                     const cc = sessions[0]?.connectionConfig;
                     let stored = null;
                     try { const r = localStorage.getItem('mudterm_display_' + connId); if (r) stored = JSON.parse(r); } catch (e) {}
-                    const src = cc || stored || {};
+                    // Merge: connectionConfig provides fallback identity fields,
+                    // stored display settings override for font/size/etc
+                    const src = { ...(cc || {}), ...(stored || {}) };
                     function fill(id, v, fb) { const el = document.getElementById(id); if (el) el.value = v ?? fb ?? ''; }
                     fill('edit-conn-font-family',    src.fontFamily,    'JetBrains Mono');
                     fill('edit-conn-font-size',      src.fontSize,      14);
@@ -1249,7 +1271,7 @@ function checkUrlConnect() {
         if (!exists) { connData.id = generateId(); connections.push(connData); state.set('connections', connections); storage.save(); renderConnections(); }
     }
     showTerminal();
-    sessionManager.createSession(connData, null);
+    sessionManager.createSession(connData, null, getStoredTerminalOpts(connData.id));
 }
 
 init().catch(console.error);
