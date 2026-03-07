@@ -44,6 +44,7 @@ export const API_CONFIG = {
         GOOGLE: '/auth/google',
         GITHUB: '/auth/github',
         DISCORD: '/auth/discord',
+        LOGOUT: '/auth/logout',
         ME: '/me'
     },
 

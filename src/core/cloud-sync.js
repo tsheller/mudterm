@@ -34,7 +34,7 @@ import { events, Events } from './events.js';
 // AUTH STATE
 // ═══════════════════════════════════════════════════════════════════════
 
-let authToken = window.__mudterm_auth_token || localStorage.getItem(API_CONFIG.STORAGE_KEYS.AUTH_TOKEN);
+let authToken = localStorage.getItem(API_CONFIG.STORAGE_KEYS.AUTH_TOKEN);
 let authUser = null;
 let syncInterval = null;
 let activeDeviceSet = null;
@@ -99,7 +99,7 @@ function getLocalVersion() {
 
 function getHeaders() {
     const h = { 'Content-Type': 'application/json' };
-    const token = authToken || window.__mudterm_auth_token;
+    const token = authToken;
     if (token) h['Authorization'] = `Bearer ${token}`;
     return h;
 }
@@ -537,17 +537,20 @@ function stopAutoSync() {
 // ═══════════════════════════════════════════════════════════════════════
 
 export const cloudSync = {
-    isLoggedIn() { return !!(authToken || window.__mudterm_auth_token); },
+    isLoggedIn() { return !!authToken; },
     getUser() { return authUser; },
     getToken() { return authToken; },
 
     signInWithGoogle() {
+        localStorage.setItem('mudterm_auth_provider', 'google');
         window.location.href = `${API_CONFIG.API_URL}${API_CONFIG.AUTH.GOOGLE}?return_url=${getReturnUrl()}`;
     },
     signInWithGitHub() {
+        localStorage.setItem('mudterm_auth_provider', 'github');
         window.location.href = `${API_CONFIG.API_URL}${API_CONFIG.AUTH.GITHUB}?return_url=${getReturnUrl()}`;
     },
     signInWithDiscord() {
+        localStorage.setItem('mudterm_auth_provider', 'discord');
         window.location.href = `${API_CONFIG.API_URL}${API_CONFIG.AUTH.DISCORD}?return_url=${getReturnUrl()}`;
     },
 
@@ -556,12 +559,20 @@ export const cloudSync = {
         if (isDirty() && activeDeviceSet) {
             fullSync(activeDeviceSet.id).catch(() => {});
         }
+        // Tell the server to invalidate the session
+        if (authToken) {
+            fetch(`${API_CONFIG.API_URL}${API_CONFIG.AUTH.LOGOUT}`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            }).catch(() => {});
+        }
         authToken = null;
         authUser = null;
         activeDeviceSet = null;
         localStorage.removeItem(API_CONFIG.STORAGE_KEYS.AUTH_TOKEN);
         localStorage.removeItem(API_CONFIG.STORAGE_KEYS.AUTH_USER);
         localStorage.removeItem(API_CONFIG.STORAGE_KEYS.ACTIVE_DEVICE_SET);
+        localStorage.removeItem('mudterm_auth_provider');
         clearDirty();
         stopAutoSync();
         events.emit('cloud:signed-out');
@@ -571,7 +582,22 @@ export const cloudSync = {
         if (!authToken) return null;
         try {
             const data = await api('GET', API_CONFIG.AUTH.ME);
-            authUser = data;
+
+            // Determine which provider was used for this login.
+            // The stamped value (set before OAuth redirect) is the most reliable signal.
+            // Fall back to providers[0] only if nothing was stamped.
+            const stampedProvider = localStorage.getItem('mudterm_auth_provider');
+            const knownProviders = (data.providers || []).map(p => p.provider);
+            let resolvedProvider = null;
+            if (stampedProvider && knownProviders.includes(stampedProvider)) {
+                resolvedProvider = stampedProvider;
+            } else if (knownProviders.length > 0) {
+                resolvedProvider = knownProviders[0];
+            }
+            // Clear the stamp now that we've consumed it
+            localStorage.removeItem('mudterm_auth_provider');
+
+            authUser = { ...data, provider: resolvedProvider };
             localStorage.setItem(API_CONFIG.STORAGE_KEYS.AUTH_USER, JSON.stringify(authUser));
             return authUser;
         } catch (e) {

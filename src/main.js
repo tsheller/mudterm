@@ -713,7 +713,7 @@ function setupCloudUI() {
                     <button id="btn-cloud-sync" class="cloud-btn cloud-btn-sm" title="Sync Now">↻</button>
                 </div>
                 <div class="cloud-bar-right">
-                    <button id="btn-gdrive-backup" class="cloud-btn cloud-btn-sm" title="Backup to Google Drive">📁 Drive</button>
+                    ${user?.provider === 'google' ? `<button id="btn-gdrive-backup" class="cloud-btn cloud-btn-sm" title="Backup to Google Drive">📁 Drive</button>` : ''}
                     <button id="btn-cloud-signout" class="cloud-btn">Sign Out</button>
                 </div>`;
 
@@ -842,8 +842,8 @@ function setupCloudUI() {
         }
     }
 
-    events.on('cloud:signed-in', () => renderCloudBar());
-    events.on('cloud:signed-out', () => renderCloudBar());
+    events.on('cloud:signed-in', () => { renderCloudBar(); updateSettingsAuthUI(cloudSync.getUser()); });
+    events.on('cloud:signed-out', () => { renderCloudBar(); updateSettingsAuthUI(null); });
     events.on('cloud:sync-start', () => { const el = document.getElementById('cloud-sync-indicator'); if (el) el.textContent = '☁ Syncing...'; });
     events.on('cloud:sync-complete', () => {
         const el = document.getElementById('cloud-sync-indicator');
@@ -862,6 +862,72 @@ function setupCloudUI() {
     events.on('cloud:device-set-changed', () => { renderConnections(); loadDeviceSetDropdown(); });
     events.on('cloud:device-sets-loaded', () => { loadDeviceSetDropdown(); renderConnections(); });
     events.on('cloud:connection-moved', () => renderConnections());
+
+    function updateSettingsAuthUI(user) {
+        const signedOut = document.getElementById('settings-signed-out');
+        const signedIn  = document.getElementById('settings-signed-in');
+        const statusDot  = document.getElementById('login-status-dot');
+        const statusText = document.getElementById('login-status-text');
+        const loginStatus = document.getElementById('login-status');
+
+        if (user) {
+            if (signedOut) signedOut.style.display = 'none';
+            if (signedIn)  signedIn.style.display  = 'block';
+            const nameEl     = document.getElementById('settings-user-name');
+            const emailEl    = document.getElementById('settings-user-email');
+            const providerEl = document.getElementById('settings-user-provider');
+            const avatarEl   = document.getElementById('settings-user-avatar');
+            if (nameEl) nameEl.textContent = user.display_name || user.email || 'User';
+            if (emailEl) {
+                emailEl.textContent = user.email || '';
+                emailEl.style.display = user.email ? 'block' : 'none';
+            }
+            if (providerEl) {
+                providerEl.textContent = user.provider ? ('via ' + user.provider) : '';
+                providerEl.style.display = user.provider ? 'block' : 'none';
+            }
+            if (avatarEl) {
+                if (user.avatar_url) {
+                    avatarEl.innerHTML = `<img src="${escapeHtml(user.avatar_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.parentElement.textContent='👤'">`;
+                } else {
+                    avatarEl.textContent = (user.display_name || user.email || 'U').charAt(0).toUpperCase();
+                }
+            }
+            if (statusDot)  { statusDot.style.background = 'var(--accent-green, #00ff88)'; statusDot.style.boxShadow = '0 0 6px var(--accent-green, #00ff88)'; }
+            if (statusText) { statusText.textContent = user.display_name || user.email || 'Signed In'; statusText.style.color = 'var(--text-primary, #f0f0f5)'; }
+            if (loginStatus) loginStatus.style.borderColor = 'rgba(0,255,136,0.3)';
+        } else {
+            if (signedOut) signedOut.style.display = 'block';
+            if (signedIn)  signedIn.style.display  = 'none';
+            if (statusDot)  { statusDot.style.background = '#555'; statusDot.style.boxShadow = 'none'; }
+            if (statusText) { statusText.textContent = 'Logged Out'; statusText.style.color = 'var(--text-muted, #7a7a90)'; }
+            if (loginStatus) loginStatus.style.borderColor = 'var(--border-color, #333344)';
+        }
+    }
+
+    // Settings modal — sign-in buttons
+    document.getElementById('settings-google-signin')?.addEventListener('click', () => cloudSync.signInWithGoogle());
+    document.getElementById('settings-github-signin')?.addEventListener('click', () => cloudSync.signInWithGitHub());
+    document.getElementById('settings-discord-signin')?.addEventListener('click', () => cloudSync.signInWithDiscord());
+
+    // Settings modal — sign out
+    document.getElementById('settings-signout-btn')?.addEventListener('click', () => {
+        cloudSync.signOut();
+        document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
+    });
+
+    // Settings modal — close button
+    document.getElementById('close-settings')?.addEventListener('click', () => {
+        document.getElementById('modal-settings')?.classList.remove('active');
+    });
+
+    // Header login-status pill → open settings
+    document.getElementById('login-status')?.addEventListener('click', () => {
+        document.getElementById('modal-settings')?.classList.add('active');
+    });
+
+    // Seed the settings UI with current state on first load
+    updateSettingsAuthUI(cloudSync.isLoggedIn() ? cloudSync.getUser() : null);
 
     renderCloudBar();
 }
