@@ -1282,7 +1282,7 @@ class ConnectionManager {
                 .filter(s => s.length > 0);
 
             // We support UTF-8 preferentially, then ASCII
-            const preferred = ['UTF-8', 'US-ASCII', 'ASCII', 'ISO-8859-1', 'LATIN1'];
+            const preferred = ['UTF-8', 'US-ASCII', 'ASCII'];
             let accepted = null;
             for (const pref of preferred) {
                 if (charsets.includes(pref)) { accepted = pref; break; }
