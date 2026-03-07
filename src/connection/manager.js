@@ -147,6 +147,12 @@ class ConnectionManager {
         // Telnet option state (prevents negotiation loops)
         this.telnetOptions = { local: {}, remote: {} };
 
+        // Telnet parser state machine
+        this._telnetState = 'NORMAL';
+        this._telnetCmd   = 0;
+        this._sbOption    = 0;
+        this._sbBuffer    = [];
+
         // MCCP compression
         this.mccp2Active = false;
         this.mccpVersion = 0;
@@ -217,6 +223,10 @@ class ConnectionManager {
         this._autoReconnect = options.autoReconnect !== false; // Default true
         this.inputBuffer = new Uint8Array(0);
         this.telnetOptions = { local: {}, remote: {} };
+        this._telnetState = 'NORMAL';
+        this._telnetCmd   = 0;
+        this._sbOption    = 0;
+        this._sbBuffer    = [];
         this.ttypeIndex = 0;
         this.gmcpPackages.clear();
         this.mccp2Active = false;
@@ -246,6 +256,10 @@ class ConnectionManager {
         this.gmcpPackages.clear();
         this.telnetOptions = { local: {}, remote: {} };
         this.inputBuffer = new Uint8Array(0);
+        this._telnetState = 'NORMAL';
+        this._telnetCmd   = 0;
+        this._sbOption    = 0;
+        this._sbBuffer    = [];
         this.mccp2Active = false;
         this.mccpVersion = 0;
         this.mccp2Inflater = null;
@@ -385,7 +399,8 @@ class ConnectionManager {
                 this._handleTextFrame(event.data);
                 break;
             case SUBPROTOCOLS.GMCP:
-                isBinary ? this._handleGMCPBinaryFrame(event.data) : this._handleTextFrame(event.data);
+                // Per mudstandards.org spec: BINARY frames = ANSI terminal text, TEXT frames = GMCP data
+                isBinary ? this._handleTextFrame(event.data) : this._handleGMCPBinaryFrame(event.data);
                 break;
             case SUBPROTOCOLS.EXTENDED:
                 isBinary ? this._handleExtendedBinaryFrame(event.data) : this._handleTextFrame(event.data);
@@ -445,6 +460,10 @@ class ConnectionManager {
         // Reset telnet/protocol state
         this.inputBuffer = new Uint8Array(0);
         this.telnetOptions = { local: {}, remote: {} };
+        this._telnetState = 'NORMAL';
+        this._telnetCmd   = 0;
+        this._sbOption    = 0;
+        this._sbBuffer    = [];
         this.ttypeIndex = 0;
         this.gmcpPackages.clear();
         this.mccp2Active = false;
@@ -581,8 +600,9 @@ class ConnectionManager {
             this._intentionalDisconnect = true;
         }
 
-        if (this.protocol === SUBPROTOCOLS.TELNET) {
-            this.socket.send(this._encoder.encode(cmd + '\r\n'));
+        if (this.protocol === SUBPROTOCOLS.TELNET || this.protocol === SUBPROTOCOLS.GMCP) {
+            // TELNET and GMCP both send player commands as binary frames
+            this.socket.send(this._encoder.encode(cmd + '\r\n').buffer);
         } else {
             this.socket.send(cmd + '\r\n');
         }
@@ -612,7 +632,8 @@ class ConnectionManager {
 
         switch (this.protocol) {
             case SUBPROTOCOLS.GMCP:
-                this.socket.send(payloadBytes.buffer);
+                // Per mudstandards.org spec: GMCP messages sent as TEXT frames (string)
+                this.socket.send(payload);
                 break;
             case SUBPROTOCOLS.EXTENDED: {
                 const p = new Uint8Array(1 + payloadBytes.length);
@@ -975,108 +996,110 @@ class ConnectionManager {
     // ═══════════════════════════════════════════════════════════════════════
 
     _processTelnetBuffer() {
-        const buffer = this.inputBuffer;
+        const buf = this.inputBuffer;
+        this.inputBuffer = new Uint8Array(0);
+
         let textChunks = [];
-        let i = 0;
 
-        while (i < buffer.length) {
-            if (buffer[i] === IAC && i + 1 < buffer.length) {
-                const cmd = buffer[i + 1];
+        const flushText = () => {
+            if (textChunks.length > 0) {
+                this._emit(Events.CONNECTION_DATA, {
+                    type: 'text',
+                    data: this._decoder.decode(new Uint8Array(textChunks))
+                });
+                textChunks = [];
+            }
+        };
 
-                if (cmd === IAC) {
-                    textChunks.push(255);
-                    i += 2;
+        for (let i = 0; i < buf.length; i++) {
+            const byte = buf[i];
 
-                } else if (cmd === SB && i + 2 < buffer.length) {
-                    const option = buffer[i + 2];
-                    let seIndex = -1;
-                    for (let j = i + 3; j < buffer.length - 1; j++) {
-                        if (buffer[j] === IAC) {
-                            if (buffer[j + 1] === SE) { seIndex = j; break; }
-                            else if (buffer[j + 1] === IAC) j++;
-                        }
-                    }
+            switch (this._telnetState) {
 
-                    if (seIndex === -1) break; // Incomplete
-
-                    // Flush text
-                    if (textChunks.length > 0) {
-                        this._emit(Events.CONNECTION_DATA, {
-                            type: 'text',
-                            data: this._decoder.decode(new Uint8Array(textChunks))
-                        });
-                        textChunks = [];
-                    }
-
-                    // Unescape and handle subneg
-                    const rawSub = buffer.slice(i + 3, seIndex);
-                    const unescaped = [];
-                    for (let j = 0; j < rawSub.length; j++) {
-                        unescaped.push(rawSub[j]);
-                        if (rawSub[j] === IAC && j + 1 < rawSub.length && rawSub[j + 1] === IAC) j++;
-                    }
-                    this._handleSubnegotiation(option, new Uint8Array(unescaped));
-                    i = seIndex + 2;
-
-                    // MCCP mid-buffer activation
-                    if (this.mccp2Active && i < buffer.length) {
-                        const inflated = this._inflateMCCP(buffer.slice(i));
-                        if (inflated && inflated.length > 0) {
-                            this.inputBuffer = inflated;
-                            this._processTelnetBuffer();
-                        } else {
-                            this.inputBuffer = new Uint8Array(0);
-                        }
-                        return;
-                    }
-
-                } else if (cmd === WILL || cmd === WONT || cmd === DO || cmd === DONT) {
-                    if (i + 2 < buffer.length) {
-                        if (textChunks.length > 0) {
-                            this._emit(Events.CONNECTION_DATA, {
-                                type: 'text',
-                                data: this._decoder.decode(new Uint8Array(textChunks))
-                            });
-                            textChunks = [];
-                        }
-                        this._handleNegotiation(cmd, buffer[i + 2]);
-                        i += 3;
+                case 'NORMAL':
+                    if (byte === IAC) {
+                        this._telnetState = 'IAC';
                     } else {
-                        break;
+                        textChunks.push(byte);
                     }
+                    break;
 
-                } else if (cmd === GA || cmd === EOR) {
-                    if (textChunks.length > 0) {
-                        this._emit(Events.CONNECTION_DATA, {
-                            type: 'text',
-                            data: this._decoder.decode(new Uint8Array(textChunks))
-                        });
-                        textChunks = [];
+                case 'IAC':
+                    if (byte === IAC) {
+                        // IAC IAC → literal 0xFF in data stream
+                        textChunks.push(IAC);
+                        this._telnetState = 'NORMAL';
+                    } else if (byte === SB) {
+                        flushText();
+                        this._telnetState = 'SB_OPTION';
+                    } else if (byte === WILL || byte === WONT || byte === DO || byte === DONT) {
+                        flushText();
+                        this._telnetCmd = byte;
+                        this._telnetState = 'NEGOTIATION';
+                    } else if (byte === GA || byte === EOR) {
+                        flushText();
+                        this._emit(Events.CONNECTION_DATA, { type: 'prompt-marker' });
+                        this._telnetState = 'NORMAL';
+                    } else if (byte === AYT) {
+                        this.send('[Yes]');
+                        this._telnetState = 'NORMAL';
+                    } else {
+                        // NOP and other single-byte commands
+                        this._telnetState = 'NORMAL';
                     }
-                    this._emit(Events.CONNECTION_DATA, { type: 'prompt-marker' });
-                    i += 2;
+                    break;
 
-                } else if (cmd === AYT) {
-                    this.send('[Yes]');
-                    i += 2;
+                case 'NEGOTIATION':
+                    this._handleNegotiation(this._telnetCmd, byte);
+                    this._telnetCmd = 0;
+                    this._telnetState = 'NORMAL';
+                    break;
 
-                } else {
-                    i += 2; // NOP, etc
-                }
-            } else {
-                textChunks.push(buffer[i]);
-                i++;
+                case 'SB_OPTION':
+                    this._sbOption = byte;
+                    this._sbBuffer = [];
+                    this._telnetState = 'SB_DATA';
+                    break;
+
+                case 'SB_DATA':
+                    if (byte === IAC) {
+                        this._telnetState = 'SB_IAC';
+                    } else {
+                        this._sbBuffer.push(byte);
+                    }
+                    break;
+
+                case 'SB_IAC':
+                    if (byte === SE) {
+                        // Complete subnegotiation
+                        this._handleSubnegotiation(this._sbOption, new Uint8Array(this._sbBuffer));
+                        this._sbBuffer = [];
+                        this._telnetState = 'NORMAL';
+
+                        // MCCP mid-buffer activation: remaining bytes are compressed
+                        if (this.mccp2Active && i + 1 < buf.length) {
+                            const inflated = this._inflateMCCP(buf.slice(i + 1));
+                            if (inflated && inflated.length > 0) {
+                                this.inputBuffer = inflated;
+                                this._processTelnetBuffer();
+                            }
+                            return;
+                        }
+                    } else if (byte === IAC) {
+                        // IAC IAC inside subneg → escaped 0xFF
+                        this._sbBuffer.push(IAC);
+                        this._telnetState = 'SB_DATA';
+                    } else {
+                        // Malformed — treat IAC + byte as raw data and continue
+                        this._sbBuffer.push(IAC);
+                        this._sbBuffer.push(byte);
+                        this._telnetState = 'SB_DATA';
+                    }
+                    break;
             }
         }
 
-        this.inputBuffer = buffer.slice(i);
-
-        if (textChunks.length > 0) {
-            this._emit(Events.CONNECTION_DATA, {
-                type: 'text',
-                data: this._decoder.decode(new Uint8Array(textChunks))
-            });
-        }
+        flushText();
     }
 
     _handleSubnegotiation(option, data) {

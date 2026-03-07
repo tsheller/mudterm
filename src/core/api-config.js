@@ -65,6 +65,11 @@ export const API_CONFIG = {
         AUTH_TOKEN: 'mudterm_auth_token',
         AUTH_USER: 'mudterm_auth_user',
         ACTIVE_DEVICE_SET: 'mudterm_active_device_set',
+        // The "shared" set is the canonical home for automations (aliases/triggers/scripts).
+        // It is always the default/first set created, and all devices sync automations
+        // to/from it regardless of which device set is currently active.
+        // Layout data (widgets) syncs to the active device set instead.
+        SHARED_SET: 'mudterm_shared_set_id',
         LAST_SYNC: 'mudterm_last_sync'
     }
 };

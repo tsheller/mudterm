@@ -453,6 +453,14 @@ class Session {
                 // Parse MXP tags before writing
                 const output = parseMXP(data);
                 this.terminal.write(output);
+
+                // Fire triggers against each line
+                if (this.automation) {
+                    const lines = data.split('\n');
+                    for (const line of lines) {
+                        if (line.trim()) this.automation.processLine(line);
+                    }
+                }
             }
         });
         this._unsubs.push(unsubData);

@@ -2844,3 +2844,85 @@ body:has(.connections-screen.active) .side-panel-tab {
 }
 .alias-row:hover .alias-del { opacity: 1; }
 .alias-row .alias-del:hover { background: var(--accent-red); color: #fff; }
+
+/* ═══════════════════════════════════════════════════════
+   THEMES — Light, Classic, Claude
+   ═══════════════════════════════════════════════════════ */
+
+/* ── LIGHT THEME ────────────────────────────────────── */
+[data-theme="light"] {
+    --bg-primary: #f0f0f0;
+    --bg-secondary: #e0e0e0;
+    --bg-tertiary: #d4d4d4;
+    --bg-elevated: #ffffff;
+    --accent-cyan: #0077aa;
+    --accent-magenta: #cc0077;
+    --accent-green: #007744;
+    --accent-orange: #cc5500;
+    --accent-purple: #6600cc;
+    --accent-red: #cc1133;
+    --accent-yellow: #aa7700;
+    --text-primary: #111111;
+    --text-secondary: #444444;
+    --text-muted: #888888;
+    --border-color: #bbbbbb;
+    --border-glow: rgba(0, 119, 170, 0.2);
+    --shadow-color: rgba(0, 0, 0, 0.15);
+}
+
+/* ── CLASSIC THEME (MUSHclient / Windows 9x) ────────── */
+[data-theme="classic"] {
+    --bg-primary: #000080;
+    --bg-secondary: #000060;
+    --bg-tertiary: #0000a0;
+    --bg-elevated: #c0c0c0;
+    --accent-cyan: #00ffff;
+    --accent-magenta: #ff00ff;
+    --accent-green: #00ff00;
+    --accent-orange: #ffff00;
+    --accent-purple: #ff00ff;
+    --accent-red: #ff0000;
+    --accent-yellow: #ffff00;
+    --text-primary: #ffffff;
+    --text-secondary: #c0c0c0;
+    --text-muted: #808080;
+    --border-color: #808080;
+    --border-glow: rgba(0, 255, 255, 0.3);
+    --shadow-color: rgba(0, 0, 0, 0.5);
+    --font-display: 'Courier New', monospace;
+}
+[data-theme="classic"] .app-header { background: #000080; border-bottom: 2px solid #00ffff; }
+[data-theme="classic"] .modal { background: #c0c0c0; color: #000000; border: 2px solid #808080; box-shadow: 2px 2px 0 #ffffff inset, -2px -2px 0 #404040 inset; }
+[data-theme="classic"] .modal-header { background: #000080; color: #ffffff; }
+[data-theme="classic"] .form-label, [data-theme="classic"] .modal p { color: #000000; }
+[data-theme="classic"] .form-input, [data-theme="classic"] .form-select, [data-theme="classic"] .form-textarea { background: #ffffff; color: #000000; border: 2px inset #808080; }
+[data-theme="classic"] .modal-btn { background: #c0c0c0; color: #000000; border: 2px solid; border-color: #ffffff #404040 #404040 #ffffff; }
+[data-theme="classic"] .modal-btn:active { border-color: #404040 #ffffff #ffffff #404040; }
+[data-theme="classic"] .connection-card { background: #000060; border: 1px solid #00ffff; }
+[data-theme="classic"] .side-panel { background: #c0c0c0; color: #000000; border-left: 2px solid #808080; }
+
+/* ── CLAUDE THEME (orange / slate) ─────────────────── */
+[data-theme="claude"] {
+    --bg-primary: #1a1f2e;
+    --bg-secondary: #222838;
+    --bg-tertiary: #2a3245;
+    --bg-elevated: #303d55;
+    --accent-cyan: #d97706;
+    --accent-magenta: #f59e0b;
+    --accent-green: #65a30d;
+    --accent-orange: #ea580c;
+    --accent-purple: #d97706;
+    --accent-red: #dc2626;
+    --accent-yellow: #eab308;
+    --text-primary: #f1ece4;
+    --text-secondary: #c4b8a8;
+    --text-muted: #7a8a9a;
+    --border-color: #3d4f6b;
+    --border-glow: rgba(217, 119, 6, 0.3);
+    --shadow-color: rgba(0, 0, 0, 0.4);
+}
+[data-theme="claude"] .app-header { background: #1a1f2e; border-bottom: 1px solid #d97706; }
+[data-theme="claude"] .app-title { color: #f59e0b; }
+[data-theme="claude"] .header-btn:hover { color: #f59e0b; border-color: #d97706; }
+[data-theme="claude"] .connection-card { border-color: #3d4f6b; }
+[data-theme="claude"] .connection-card:hover { border-color: #d97706; box-shadow: 0 0 12px rgba(217, 119, 6, 0.2); }

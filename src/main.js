@@ -15,8 +15,11 @@ import { statusBar } from './ui/status-bar.js';
 import { automationStore } from './core/automation-store.js';
 import { logPanel } from './ui/log-panel.js';
 import { automationPanel } from './ui/automation-panel.js';
+window.automationPanel = automationPanel;
 import { logger } from './core/logger.js';
 import { cloudSync } from './core/cloud-sync.js';
+
+let activeMode = null;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SCREENS
@@ -173,6 +176,9 @@ function escapeHtml(str) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function setup() {
+    try { _setup(); } catch(e) { console.error('[setup] THREW:', e); }
+}
+function _setup() {
     function setupConnectionTypeToggle(typeSelector, directFields, bridgeFields) {
         const typeEl = document.getElementById(typeSelector);
         const directEl = document.getElementById(directFields);
@@ -469,9 +475,9 @@ function setup() {
     // ══════════════════════════════════════════════════════════════
 
     const panel = document.getElementById('side-panel');
-    let activeMode = null;
 
     function activatePanel(mode) {
+        console.log('[Panel] activatePanel', mode, 'activeMode=', activeMode);
         if (activeMode === mode) { deactivatePanel(); return; }
 
         if (activeMode === 'layout') {
@@ -508,7 +514,12 @@ function setup() {
         } else if (mode === 'logs') {
             logPanel.render();
         } else if (mode === 'auto') {
-            automationPanel.render(sessionManager.getActive());
+            const activeConnId = state.get('activeConnection');
+            const session = (activeConnId
+                ? sessionManager.getAllSessions().find(s => s.connectionConfig?.id === activeConnId)
+                : null) || sessionManager.getActive() || sessionManager.getAllSessions()[0] || null;
+            if (session?.automation) session.automation.reload();
+            automationPanel.render(session);
         }
     }
 
@@ -523,9 +534,23 @@ function setup() {
         panel?.classList.remove('open');
     }
 
-    document.getElementById('btn-auto')?.addEventListener('click', () => activatePanel('auto'));
-    document.getElementById('btn-edit')?.addEventListener('click', () => activatePanel('layout'));
-    document.getElementById('btn-logs')?.addEventListener('click', () => activatePanel('logs'));
+    // Use event delegation so clicks work even if buttons are recreated
+    document.addEventListener('click', (e) => {
+        const btn = e.target.closest('#btn-auto, #btn-edit, #btn-logs, #btn-disconnect, #close-panel');
+        if (!btn) return;
+        if (btn.id === 'btn-auto')        { activatePanel('auto'); }
+        else if (btn.id === 'btn-edit')   { activatePanel('layout'); }
+        else if (btn.id === 'btn-logs')   { activatePanel('logs'); }
+        else if (btn.id === 'btn-disconnect') {
+            const activeSession = sessionManager.getActive();
+            if (activeSession) sessionManager.closeSession(activeSession.id);
+            updateConnectionStatus(false);
+            deactivatePanel();
+        }
+        else if (btn.id === 'close-panel') { panel?.classList.remove('open'); }
+    });
+
+    window.activatePanel = activatePanel;
 
     document.querySelectorAll('.side-panel-tab').forEach(tab => {
         tab.addEventListener('click', () => {
@@ -534,18 +559,16 @@ function setup() {
             } else {
                 panel?.classList.add('open');
                 if (activeMode === 'logs') logPanel.render();
-                if (activeMode === 'auto') automationPanel.render(sessionManager.getActive());
+                if (activeMode === 'auto') {
+                    const activeConnId = state.get('activeConnection');
+                    const session = (activeConnId
+                        ? sessionManager.getAllSessions().find(s => s.connectionConfig?.id === activeConnId)
+                        : null) || sessionManager.getActive() || sessionManager.getAllSessions()[0] || null;
+                    if (session?.automation) session.automation.reload();
+                    automationPanel.render(session);
+                }
             }
         });
-    });
-
-    document.getElementById('close-panel')?.addEventListener('click', () => panel?.classList.remove('open'));
-
-    document.getElementById('btn-disconnect')?.addEventListener('click', () => {
-        const activeSession = sessionManager.getActive();
-        if (activeSession) sessionManager.closeSession(activeSession.id);
-        updateConnectionStatus(false);
-        deactivatePanel();
     });
 
     document.querySelectorAll('.auto-subtab').forEach(tab => {
@@ -642,6 +665,7 @@ function setup() {
     events.on(Events.LOG_STOP, updateLogsIndicator);
     events.on(Events.SESSION_SWITCH, updateLogsIndicator);
     events.on(Events.SESSION_DESTROY, updateLogsIndicator);
+    events.on(Events.SESSION_DESTROY, () => { automationPanel.clear(); });
 
     document.querySelectorAll('.modal-overlay').forEach(overlay => {
         overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('active'); });
@@ -655,15 +679,20 @@ function setup() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function setupCloudUI() {
-    const connHeader = document.querySelector('.connections-header') || document.querySelector('#screen-connections');
-    if (!connHeader) return;
+    const connScreen = document.getElementById('screen-connections');
+    if (!connScreen) return;
 
     let cloudBar = document.getElementById('cloud-bar');
     if (!cloudBar) {
         cloudBar = document.createElement('div');
         cloudBar.id = 'cloud-bar';
         cloudBar.className = 'cloud-bar';
-        connHeader.insertBefore(cloudBar, connHeader.firstChild);
+        const grid = document.getElementById('connection-grid');
+        if (grid) {
+            connScreen.insertBefore(cloudBar, grid);
+        } else {
+            connScreen.appendChild(cloudBar);
+        }
     }
 
     function renderCloudBar() {
@@ -816,7 +845,19 @@ function setupCloudUI() {
     events.on('cloud:signed-in', () => renderCloudBar());
     events.on('cloud:signed-out', () => renderCloudBar());
     events.on('cloud:sync-start', () => { const el = document.getElementById('cloud-sync-indicator'); if (el) el.textContent = '☁ Syncing...'; });
-    events.on('cloud:sync-complete', () => { const el = document.getElementById('cloud-sync-indicator'); if (el) el.textContent = '☁ Synced'; cloudSync.fetchCloudConnections().then(() => renderConnections()); });
+    events.on('cloud:sync-complete', () => {
+        const el = document.getElementById('cloud-sync-indicator');
+        if (el) el.textContent = '☁ Synced';
+        cloudSync.fetchCloudConnections().then(() => renderConnections());
+        sessionManager.getAllSessions().forEach(s => { if (s.automation) s.automation.reload(); });
+        if (activeMode === 'auto') {
+            const activeConnId = state.get('activeConnection');
+            const session = (activeConnId
+                ? sessionManager.getAllSessions().find(s => s.connectionConfig?.id === activeConnId)
+                : null) || sessionManager.getActive() || sessionManager.getAllSessions()[0] || null;
+            automationPanel.render(session);
+        }
+    });
     events.on('cloud:sync-error', ({ error }) => { const el = document.getElementById('cloud-sync-indicator'); if (el) el.textContent = '⚠ ' + (error || 'Sync error'); });
     events.on('cloud:device-set-changed', () => { renderConnections(); loadDeviceSetDropdown(); });
     events.on('cloud:device-sets-loaded', () => { loadDeviceSetDropdown(); renderConnections(); });
@@ -833,7 +874,7 @@ function setupSessionEvents() {
     events.on(Events.SESSION_SWITCH, ({ sessionId }) => {
         if (sessionId === null) { updateConnectionStatus(false); showConnections(); return; }
         const session = sessionManager.getSession(sessionId);
-        if (session) { showTerminal(); updateConnectionStatus(session.connection.isConnected(), session.connectionConfig.name); }
+        if (session) { showTerminal(); updateConnectionStatus(session.connection.isConnected(), session.connectionConfig.name); automationPanel.render(session); }
     });
     events.on(Events.CONNECTION_OPEN, ({ sessionId }) => {
         const active = sessionManager.getActive();
@@ -842,6 +883,304 @@ function setupSessionEvents() {
     events.on(Events.CONNECTION_CLOSE, ({ sessionId }) => {
         const active = sessionManager.getActive();
         if (active && active.id === sessionId) updateConnectionStatus(false, active.connectionConfig.name + ' (closed)');
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// THEME MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const THEME_KEY = 'mudterm_theme';
+const VALID_THEMES = ['dark', 'light', 'classic', 'claude'];
+
+function applyTheme(theme) {
+    if (!VALID_THEMES.includes(theme)) theme = 'dark';
+    if (theme === 'dark') {
+        document.documentElement.removeAttribute('data-theme');
+    } else {
+        document.documentElement.setAttribute('data-theme', theme);
+    }
+    try { localStorage.setItem(THEME_KEY, theme); } catch (e) {}
+    const sel = document.getElementById('setting-theme');
+    if (sel) sel.value = theme;
+}
+
+function setupTheme() {
+    // Apply saved theme immediately
+    const saved = (() => { try { return localStorage.getItem(THEME_KEY) || 'dark'; } catch (e) { return 'dark'; } })();
+    applyTheme(saved);
+
+    function wireThemeSelect() {
+        const sel = document.getElementById('setting-theme');
+        if (!sel || sel._themeWired) return;
+        sel._themeWired = true;
+        sel.value = (() => { try { return localStorage.getItem(THEME_KEY) || 'dark'; } catch (e) { return 'dark'; } })();
+        sel.addEventListener('change', () => applyTheme(sel.value));
+    }
+
+    document.addEventListener('DOMContentLoaded', wireThemeSelect);
+    // Also wire immediately in case DOM is already ready
+    wireThemeSelect();
+    // Re-sync value when settings modal opens (in case value got stale)
+    document.addEventListener('click', (e) => {
+        if (e.target.closest('#btn-settings')) {
+            setTimeout(() => {
+                const sel = document.getElementById('setting-theme');
+                if (sel) {
+                    sel.value = (() => { try { return localStorage.getItem(THEME_KEY) || 'dark'; } catch (e) { return 'dark'; } })();
+                    if (!sel._themeWired) {
+                        sel._themeWired = true;
+                        sel.addEventListener('change', () => applyTheme(sel.value));
+                    }
+                }
+            }, 0);
+        }
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LIVE SETTINGS — Apply display/input changes to active terminal sessions
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function applyDisplayToSession(session, cfg) {
+    const t = session.terminal;
+    if (!t || typeof t.options !== 'object') return;
+    const patch = {};
+    if (cfg.fontFamily    != null) patch.fontFamily    = cfg.fontFamily + ", 'Share Tech Mono', monospace";
+    if (cfg.fontSize      != null) patch.fontSize      = parseFloat(cfg.fontSize);
+    if (cfg.lineHeight    != null) patch.lineHeight    = parseFloat(cfg.lineHeight);
+    if (cfg.letterSpacing != null) patch.letterSpacing = parseFloat(cfg.letterSpacing);
+    if (cfg.scrollback    != null) patch.scrollback    = parseInt(cfg.scrollback, 10);
+    if (Object.keys(patch).length) {
+        t.options = patch;
+        if (session.fitAddon && session.containerEl?.style.display !== 'none') session.fitAddon.fit();
+    }
+}
+
+function applyInputToSession(session, cfg) {
+    if (cfg.localEcho      != null) session.localEcho             = cfg.localEcho;
+    if (cfg.commandHistory != null) session.commandHistoryEnabled = cfg.commandHistory;
+    if (cfg.historySize    != null) {
+        session.historySize = parseInt(cfg.historySize, 10);
+        if (Array.isArray(session.commandHistory) && session.commandHistory.length > session.historySize)
+            session.commandHistory = session.commandHistory.slice(0, session.historySize);
+    }
+    if (cfg.cmdSeparator != null) session.cmdSeparator = cfg.cmdSeparator;
+}
+
+function restoreDisplayForSession(session) {
+    if (!session?.connectionConfig) return;
+    try {
+        const raw = localStorage.getItem('mudterm_display_' + session.connectionConfig.id);
+        if (!raw) return;
+        const cfg = JSON.parse(raw);
+        applyDisplayToSession(session, cfg);
+        applyInputToSession(session, { cmdSeparator: cfg.cmdSeparator });
+    } catch (e) { console.warn('[live-settings] restoreDisplay error:', e); }
+}
+
+async function persistDisplaySettings(connId, cfg) {
+    try {
+        const raw = localStorage.getItem('mudterm_display_' + connId);
+        const existing = raw ? JSON.parse(raw) : {};
+        const snapshot = Object.assign(existing, {
+            fontFamily:    cfg.fontFamily    ?? existing.fontFamily,
+            fontSize:      cfg.fontSize      != null ? parseFloat(cfg.fontSize)      : existing.fontSize,
+            lineHeight:    cfg.lineHeight    != null ? parseFloat(cfg.lineHeight)    : existing.lineHeight,
+            letterSpacing: cfg.letterSpacing != null ? parseFloat(cfg.letterSpacing) : existing.letterSpacing,
+            scrollback:    cfg.scrollback    != null ? parseInt(cfg.scrollback, 10)  : existing.scrollback,
+            cmdSeparator:  cfg.cmdSeparator  ?? existing.cmdSeparator,
+        });
+        localStorage.setItem('mudterm_display_' + connId, JSON.stringify(snapshot));
+    } catch (e) { console.warn('[live-settings] persist error:', e); }
+    // Cloud sync if applicable
+    if (cloudSync.isCloudConnection && cloudSync.isCloudConnection(connId)) {
+        try { await cloudSync.fullSync(); } catch (e) {}
+    }
+}
+
+function setupLiveSettings() {
+    // Hook save button for edit connection modal
+    function hookSaveBtn() {
+        const btn = document.getElementById('save-edit-connection');
+        if (!btn || btn._liveHooked) return;
+        btn._liveHooked = true;
+        btn.addEventListener('click', () => {
+            setTimeout(async () => {
+                const connId = document.getElementById('edit-conn-id')?.value;
+                if (!connId) return;
+                const cfg = {
+                    fontFamily:     document.getElementById('edit-conn-font-family')?.value,
+                    fontSize:       document.getElementById('edit-conn-font-size')?.value,
+                    lineHeight:     document.getElementById('edit-conn-line-height')?.value,
+                    letterSpacing:  document.getElementById('edit-conn-letter-spacing')?.value,
+                    scrollback:     document.getElementById('edit-conn-scrollback')?.value,
+                    localEcho:      document.getElementById('edit-conn-local-echo')?.checked,
+                    commandHistory: document.getElementById('edit-conn-command-history')?.checked,
+                    historySize:    document.getElementById('edit-conn-history-size')?.value,
+                    cmdSeparator:   document.getElementById('edit-conn-cmd-separator')?.value,
+                };
+                // Apply to all open sessions for this connection
+                sessionManager.getAllSessions().filter(s => s.connectionConfig?.id === connId).forEach(s => {
+                    applyDisplayToSession(s, cfg);
+                    applyInputToSession(s, cfg);
+                });
+                await persistDisplaySettings(connId, cfg);
+            }, 30);
+        });
+    }
+
+    // Populate display fields when edit modal opens
+    function watchEditModal() {
+        const modal = document.getElementById('modal-edit-connection');
+        if (!modal) return;
+        const observer = new MutationObserver(() => {
+            if (modal.classList.contains('active')) {
+                setTimeout(() => {
+                    const connId = document.getElementById('edit-conn-id')?.value;
+                    if (!connId) return;
+                    const sessions = sessionManager.getAllSessions().filter(s => s.connectionConfig?.id === connId);
+                    const cc = sessions[0]?.connectionConfig;
+                    let stored = null;
+                    try { const r = localStorage.getItem('mudterm_display_' + connId); if (r) stored = JSON.parse(r); } catch (e) {}
+                    const src = cc || stored || {};
+                    function fill(id, v, fb) { const el = document.getElementById(id); if (el) el.value = v ?? fb ?? ''; }
+                    fill('edit-conn-font-family',    src.fontFamily,    'JetBrains Mono');
+                    fill('edit-conn-font-size',      src.fontSize,      14);
+                    fill('edit-conn-line-height',    src.lineHeight,    1.2);
+                    fill('edit-conn-letter-spacing', src.letterSpacing, 0);
+                    fill('edit-conn-scrollback',     src.scrollback,    10000);
+                    fill('edit-conn-cmd-separator',  src.cmdSeparator,  ';');
+                    hookSaveBtn();
+                }, 60);
+            }
+        });
+        observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    // Restore display settings when session is created or switched
+    events.on(Events.SESSION_CREATE, ({ sessionId }) => {
+        setTimeout(() => restoreDisplayForSession(sessionManager.getSession(sessionId)), 0);
+    });
+    events.on(Events.SESSION_SWITCH, ({ sessionId }) => {
+        if (sessionId) setTimeout(() => restoreDisplayForSession(sessionManager.getSession(sessionId)), 0);
+    });
+
+    hookSaveBtn();
+    watchEditModal();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONNECTION MODE — Secure (wss://) vs Plain (ws://)
+// Lets users switch between https://mudterm.com and http://plain.mudterm.com
+// Browsers block ws:// from https:// pages (mixed content policy)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const SECURE_ORIGIN = 'https://mudterm.com';
+const PLAIN_ORIGIN  = 'http://plain.mudterm.com';
+const CONN_MODE_KEY = 'mudterm_connection_mode';
+
+function getConnectionMode() {
+    try {
+        const stored = localStorage.getItem(CONN_MODE_KEY);
+        if (stored) return stored;
+        // No preference stored — infer from current origin so first-time plain.mudterm.com visitors aren't bounced
+        return window.location.origin === PLAIN_ORIGIN ? 'plain' : 'secure';
+    } catch (e) { return 'secure'; }
+}
+
+function setConnectionMode(mode) {
+    try { localStorage.setItem(CONN_MODE_KEY, mode); } catch (e) {}
+}
+
+function redirectToOrigin(origin) {
+    const dest = origin + window.location.pathname + window.location.search + window.location.hash;
+    window.location.replace(dest);
+}
+
+function setupConnectionMode() {
+    const origin = window.location.origin;
+    const isDev  = origin.includes('localhost') || origin.includes('127.0.0.1');
+
+    // On-load redirect: only redirect if there is an EXPLICIT stored preference that doesn't match
+    // Never redirect first-time visitors — store their current origin as preference instead
+    if (!isDev) {
+        let stored = null;
+        try { stored = localStorage.getItem(CONN_MODE_KEY); } catch (e) {}
+        if (stored) {
+            const expected = stored === 'plain' ? PLAIN_ORIGIN : SECURE_ORIGIN;
+            if (origin !== expected) { redirectToOrigin(expected); return; }
+        } else {
+            // First visit — lock in the origin they actually arrived at
+            setConnectionMode(origin === PLAIN_ORIGIN ? 'plain' : 'secure');
+        }
+    }
+
+    // Inject toggle UI into settings modal
+    function injectToggle() {
+        if (document.getElementById('connection-mode-group')) return;
+
+        const mode    = getConnectionMode();
+        const isPlain = mode === 'plain';
+
+        // Find theme group to insert before it
+        let themeGroup = null;
+        document.querySelectorAll('.form-group').forEach(el => {
+            if (el.querySelector('#setting-theme')) themeGroup = el;
+        });
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'form-group';
+        wrapper.id = 'connection-mode-group';
+        wrapper.innerHTML = `
+            <label class="form-label" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                <span>Connection Mode</span>
+                <span id="conn-mode-badge" style="font-size:0.65rem;padding:2px 7px;border-radius:10px;font-family:'JetBrains Mono',monospace;background:${isPlain ? 'rgba(255,184,0,0.15);color:#ffb800;border:1px solid rgba(255,184,0,0.3)' : 'rgba(0,245,255,0.1);color:#00f5ff;border:1px solid rgba(0,245,255,0.2)'}">
+                    ${isPlain ? 'Plain HTTP' : 'Secure HTTPS'}
+                </span>
+            </label>
+            <div style="display:flex;gap:6px;margin-top:6px;">
+                <button id="conn-mode-secure" class="modal-btn${!isPlain ? ' primary' : ''}" style="flex:1;font-size:0.75rem;" ${isDev ? 'disabled title="Redirect disabled in dev"' : ''}>🔒 Secure (wss://)</button>
+                <button id="conn-mode-plain"  class="modal-btn${isPlain  ? ' primary' : ''}" style="flex:1;font-size:0.75rem;" ${isDev ? 'disabled title="Redirect disabled in dev"' : ''}>⚠ Plain (ws://)</button>
+            </div>
+            <div style="margin-top:6px;font-size:0.68rem;color:var(--text-muted,#556677);line-height:1.4;">
+                ${isPlain
+                    ? '⚠ Plain mode — ws:// connections allowed. Not suitable for sensitive data.'
+                    : '✓ Secure mode — wss:// only. Switch to Plain if your server doesn\'t support SSL.'}
+            </div>`;
+
+        if (themeGroup?.parentNode) {
+            themeGroup.parentNode.insertBefore(wrapper, themeGroup);
+        } else {
+            const modalBody = document.querySelector('#modal-settings .modal');
+            if (modalBody) {
+                const actions = modalBody.querySelector('.modal-actions');
+                if (actions) modalBody.insertBefore(wrapper, actions);
+                else modalBody.appendChild(wrapper);
+            }
+        }
+
+        document.getElementById('conn-mode-secure')?.addEventListener('click', () => {
+            if (isDev) return;
+            setConnectionMode('secure');
+            redirectToOrigin(SECURE_ORIGIN);
+        });
+        document.getElementById('conn-mode-plain')?.addEventListener('click', () => {
+            if (isDev) return;
+            setConnectionMode('plain');
+            redirectToOrigin(PLAIN_ORIGIN);
+        });
+    }
+
+    // Wire to settings modal open
+    const settingsModal = document.getElementById('modal-settings');
+    if (settingsModal) {
+        new MutationObserver(() => {
+            if (settingsModal.classList.contains('active')) injectToggle();
+        }).observe(settingsModal, { attributes: true, attributeFilter: ['class'] });
+    }
+    document.addEventListener('click', e => {
+        if (e.target.closest('#btn-settings')) setTimeout(injectToggle, 0);
     });
 }
 
@@ -861,13 +1200,18 @@ async function init() {
     if (logsContent) logPanel.init(logsContent);
     setup();
     setupSessionEvents();
-    setupCloudUI();
-    renderConnections();
-    showScreen('connections');
-    try { await cloudSync.init(); renderConnections(); } catch (e) { console.warn('[INIT] Cloud sync init error:', e.message); }
-    checkUrlConnect();
+    setupTheme();
+    setupLiveSettings();
+    setupConnectionMode();
     window.sessionManager = sessionManager;
     window.cloudSync = cloudSync;
+    window.automationPanel = automationPanel;
+    window.automationStore = automationStore;
+    setupCloudUI();  // MUST be before cloudSync.init() so listeners are ready
+    renderConnections();
+    showScreen('connections');
+    try { await cloudSync.init(); renderConnections(); setupCloudUI(); } catch (e) { console.warn('[INIT] Cloud sync init error:', e.message); }
+    checkUrlConnect();
     console.log('MUDTERM.IO initialized');
 }
 

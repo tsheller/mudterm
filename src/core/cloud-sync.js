@@ -27,17 +27,29 @@
 import { API_CONFIG } from './api-config.js';
 import { state } from './state.js';
 import { storage } from './storage.js';
-import { automationStore } from './automation-store.js';
+import { automationStore, LAYOUT_PREFIX } from './automation-store.js';
 import { events, Events } from './events.js';
 
 // ═══════════════════════════════════════════════════════════════════════
 // AUTH STATE
 // ═══════════════════════════════════════════════════════════════════════
 
-let authToken = localStorage.getItem(API_CONFIG.STORAGE_KEYS.AUTH_TOKEN);
+let authToken = window.__mudterm_auth_token || localStorage.getItem(API_CONFIG.STORAGE_KEYS.AUTH_TOKEN);
 let authUser = null;
 let syncInterval = null;
 let activeDeviceSet = null;
+
+// The "shared set" is the canonical device set for automations (aliases,
+// triggers, scripts, timers).  All devices sync automations to/from this
+// single set so they stay identical everywhere.  Widget layouts, by
+// contrast, are synced per active device set so each device can have its
+// own UI layout.
+//
+// sharedSetId is populated on init() from the stored SHARED_SET key, or
+// falls back to the default/first device set.
+let sharedSetId = localStorage.getItem(API_CONFIG.STORAGE_KEYS.SHARED_SET) || null;
+
+const AUTO_PREFIX = 'mudterm_auto_';
 
 // Cloud-only connection cache — connections that live on the server,
 // separate from local state.  Populated by fetchCloudConnections().
@@ -87,7 +99,8 @@ function getLocalVersion() {
 
 function getHeaders() {
     const h = { 'Content-Type': 'application/json' };
-    if (authToken) h['Authorization'] = `Bearer ${authToken}`;
+    const token = authToken || window.__mudterm_auth_token;
+    if (token) h['Authorization'] = `Bearer ${token}`;
     return h;
 }
 
@@ -226,7 +239,20 @@ function gatherAllAutomationKeys() {
     const keys = [];
     for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
-        if (key && key.startsWith('mudterm_auto_')) {
+        // Only gather automation keys (mudterm_auto_*), NOT layout keys.
+        // Layouts live in mudterm_layout_* and sync separately per device set.
+        if (key && key.startsWith(AUTO_PREFIX)) {
+            keys.push(key);
+        }
+    }
+    return keys;
+}
+
+function gatherAllLayoutKeys() {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(LAYOUT_PREFIX)) {
             keys.push(key);
         }
     }
@@ -250,29 +276,62 @@ function gatherAutomationData() {
     return entries;
 }
 
-async function syncAutomations(setId, forcePull = false) {
+function gatherLayoutData() {
+    const entries = {};
+    const keys = gatherAllLayoutKeys();
+    const now = new Date().toISOString();
+    for (const key of keys) {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(key));
+            if (parsed && !parsed._updatedAt) {
+                parsed._updatedAt = now;
+            }
+            entries[key] = parsed;
+        } catch (e) { /* skip corrupt */ }
+    }
+    return entries;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SYNC — AUTOMATIONS (shared across all device sets)
+//
+// Automations (aliases, triggers, scripts, timers) are the same on every
+// device.  They always sync to/from sharedSetId regardless of which
+// device set is currently active.  This means editing an alias on mobile
+// is immediately available on desktop after the next sync.
+// ═══════════════════════════════════════════════════════════════════════
+
+async function syncAutomations(forcePull = false) {
+    const sid = sharedSetId;
+    if (!sid) {
+        console.warn('[CloudSync] Automations: no shared set ID — skipping');
+        return null;
+    }
+
     const pullOnly = forcePull || !isDirty();
 
     if (pullOnly) {
-        // No local changes — pull cloud state only
-        console.log('[CloudSync] Automations: pull-only (no local changes)');
-        const data = await api('POST', API_CONFIG.MUDTERM.AUTOMATIONS_SYNC(setId), {
+        console.log('[CloudSync] Automations: pull-only from shared set', sid);
+        const data = await api('POST', API_CONFIG.MUDTERM.AUTOMATIONS_SYNC(sid), {
             automations: {},
             pullOnly: true
         });
 
         if (data.automations && typeof data.automations === 'object') {
             const existingKeys = gatherAllAutomationKeys();
-            const cloudKeys = new Set(Object.keys(data.automations));
+            // Only accept keys that belong to automations (not layouts)
+            const cloudAutoKeys = new Set(
+                Object.keys(data.automations).filter(k => k.startsWith(AUTO_PREFIX))
+            );
 
-            // Write cloud data locally
             for (const [key, value] of Object.entries(data.automations)) {
-                localStorage.setItem(key, JSON.stringify(value));
+                if (key.startsWith(AUTO_PREFIX)) {
+                    localStorage.setItem(key, JSON.stringify(value));
+                }
             }
 
-            // Remove local keys missing from cloud (deleted on another device)
             for (const key of existingKeys) {
-                if (!cloudKeys.has(key)) {
+                if (!cloudAutoKeys.has(key)) {
                     localStorage.removeItem(key);
                 }
             }
@@ -283,10 +342,70 @@ async function syncAutomations(setId, forcePull = false) {
         return data;
     }
 
-    // Local changes — bidirectional sync
-    // Server merges per-key by _updatedAt timestamp
-    console.log('[CloudSync] Automations: bidirectional (local changes detected)');
+    console.log('[CloudSync] Automations: bidirectional with shared set', sid);
     const localData = gatherAutomationData();
+    const data = await api('POST', API_CONFIG.MUDTERM.AUTOMATIONS_SYNC(sid), {
+        automations: localData,
+        lastSync: localStorage.getItem(API_CONFIG.STORAGE_KEYS.LAST_SYNC) || null
+    });
+
+    if (data.automations && typeof data.automations === 'object') {
+        for (const [key, value] of Object.entries(data.automations)) {
+            if (key.startsWith(AUTO_PREFIX)) {
+                localStorage.setItem(key, JSON.stringify(value));
+            }
+        }
+        automationStore.clearCache();
+    }
+
+    return data;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SYNC — LAYOUTS (per device set)
+//
+// Widget layouts (mudterm_layout_*) are device-specific — each set can
+// have completely different widget arrangements.  They sync to/from the
+// active device set's endpoint, separate from automations.
+// ═══════════════════════════════════════════════════════════════════════
+
+async function syncLayouts(setId, forcePull = false) {
+    if (!setId) return null;
+
+    const pullOnly = forcePull || !isDirty();
+
+    if (pullOnly) {
+        console.log('[CloudSync] Layouts: pull-only from set', setId);
+        const data = await api('POST', API_CONFIG.MUDTERM.AUTOMATIONS_SYNC(setId), {
+            automations: {},
+            pullOnly: true
+        });
+
+        if (data.automations && typeof data.automations === 'object') {
+            const existingKeys = gatherAllLayoutKeys();
+            const cloudLayoutKeys = new Set(
+                Object.keys(data.automations).filter(k => k.startsWith(LAYOUT_PREFIX))
+            );
+
+            for (const [key, value] of Object.entries(data.automations)) {
+                if (key.startsWith(LAYOUT_PREFIX)) {
+                    localStorage.setItem(key, JSON.stringify(value));
+                }
+            }
+
+            // Remove local layout keys that no longer exist in this device set
+            for (const key of existingKeys) {
+                if (!cloudLayoutKeys.has(key)) {
+                    localStorage.removeItem(key);
+                }
+            }
+        }
+
+        return data;
+    }
+
+    console.log('[CloudSync] Layouts: bidirectional with set', setId);
+    const localData = gatherLayoutData();
     const data = await api('POST', API_CONFIG.MUDTERM.AUTOMATIONS_SYNC(setId), {
         automations: localData,
         lastSync: localStorage.getItem(API_CONFIG.STORAGE_KEYS.LAST_SYNC) || null
@@ -294,9 +413,10 @@ async function syncAutomations(setId, forcePull = false) {
 
     if (data.automations && typeof data.automations === 'object') {
         for (const [key, value] of Object.entries(data.automations)) {
-            localStorage.setItem(key, JSON.stringify(value));
+            if (key.startsWith(LAYOUT_PREFIX)) {
+                localStorage.setItem(key, JSON.stringify(value));
+            }
         }
-        automationStore.clearCache();
     }
 
     return data;
@@ -316,20 +436,23 @@ async function fullSync(setId = null, forcePull = false) {
     }
 
     const mode = forcePull ? 'pull-only' : (isDirty() ? 'bidirectional' : 'pull-only');
-    console.log(`[CloudSync] fullSync mode=${mode} dirty=${isDirty()} version=${getLocalVersion()}`);
+    console.log(`[CloudSync] fullSync mode=${mode} layoutSet=${sid} sharedSet=${sharedSetId} dirty=${isDirty()} version=${getLocalVersion()}`);
     events.emit('cloud:sync-start', { mode });
 
     try {
-        const [connResult, autoResult] = await Promise.all([
+        // Connections and layouts are device-set-specific.
+        // Automations are shared — always sync to sharedSetId.
+        const [connResult, autoResult, layoutResult] = await Promise.all([
             syncConnections(sid, forcePull),
-            syncAutomations(sid, forcePull)
+            syncAutomations(forcePull),
+            syncLayouts(sid, forcePull)
         ]);
 
         localStorage.setItem(API_CONFIG.STORAGE_KEYS.LAST_SYNC, new Date().toISOString());
         clearDirty();
         events.emit('cloud:sync-complete', { connections: connResult, automations: autoResult, mode });
 
-        return { connections: connResult, automations: autoResult };
+        return { connections: connResult, automations: autoResult, layouts: layoutResult };
     } catch (e) {
         console.error('[CloudSync] Sync failed:', e.message);
         events.emit('cloud:sync-error', { error: e.message });
@@ -356,7 +479,7 @@ async function switchDeviceSet(setId) {
     activeDeviceSet = set;
     localStorage.setItem(API_CONFIG.STORAGE_KEYS.ACTIVE_DEVICE_SET, setId);
 
-    // Always pull-only when switching sets
+    // Pull connections for the new device set
     const connData = await api('POST', API_CONFIG.MUDTERM.CONNECTIONS_SYNC(setId), {
         connections: [],
         pullOnly: true
@@ -367,21 +490,10 @@ async function switchDeviceSet(setId) {
         storage.save();
     }
 
-    const autoData = await api('POST', API_CONFIG.MUDTERM.AUTOMATIONS_SYNC(setId), {
-        automations: {},
-        pullOnly: true
-    });
-
-    if (autoData.automations) {
-        const existingKeys = gatherAllAutomationKeys();
-        for (const key of existingKeys) {
-            localStorage.removeItem(key);
-        }
-        for (const [key, value] of Object.entries(autoData.automations)) {
-            localStorage.setItem(key, JSON.stringify(value));
-        }
-        automationStore.clearCache();
-    }
+    // Pull ONLY layouts from the new device set.
+    // Automations (aliases/triggers/scripts) are shared and do NOT change
+    // when switching sets — that is the whole point of this architecture.
+    await syncLayouts(setId, true);
 
     clearDirty();
     events.emit('cloud:device-set-changed', { set });
@@ -425,7 +537,7 @@ function stopAutoSync() {
 // ═══════════════════════════════════════════════════════════════════════
 
 export const cloudSync = {
-    isLoggedIn() { return !!authToken; },
+    isLoggedIn() { return !!(authToken || window.__mudterm_auth_token); },
     getUser() { return authUser; },
     getToken() { return authToken; },
 
@@ -475,6 +587,7 @@ export const cloudSync = {
 
     // ── Device Sets ──
     getActiveDeviceSet() { return activeDeviceSet; },
+    getSharedSetId() { return sharedSetId; },
     loadDeviceSets,
     createDeviceSet,
     updateDeviceSet,
@@ -485,7 +598,8 @@ export const cloudSync = {
     // ── Sync ──
     fullSync,
     syncConnections: () => activeDeviceSet ? syncConnections(activeDeviceSet.id) : null,
-    syncAutomations: () => activeDeviceSet ? syncAutomations(activeDeviceSet.id) : null,
+    syncAutomations: () => syncAutomations(),
+    syncLayouts: () => activeDeviceSet ? syncLayouts(activeDeviceSet.id) : null,
 
     // ── Cloud Connections (separate from local state) ──
     getCloudConnections() { return _cloudConnections; },
@@ -602,7 +716,9 @@ export const cloudSync = {
                 // First time — create default set and push local data
                 const defaultSet = await createDeviceSet('Default', 'desktop', 'Default configuration');
                 activeDeviceSet = defaultSet;
+                sharedSetId = defaultSet.id;
                 localStorage.setItem(API_CONFIG.STORAGE_KEYS.ACTIVE_DEVICE_SET, defaultSet.id);
+                localStorage.setItem(API_CONFIG.STORAGE_KEYS.SHARED_SET, defaultSet.id);
                 markDirty(); // Force push on first sync
                 await fullSync(defaultSet.id);
             } else {
@@ -611,6 +727,15 @@ export const cloudSync = {
                 const defaultSet = sets.find(s => s.is_default) || sets[0];
                 activeDeviceSet = lastSet || defaultSet;
                 localStorage.setItem(API_CONFIG.STORAGE_KEYS.ACTIVE_DEVICE_SET, activeDeviceSet.id);
+
+                // Establish the shared set for automations.
+                // Use the stored SHARED_SET if it still exists, otherwise fall back
+                // to the default set.  The shared set never changes once set —
+                // it is always the canonical home for alias/trigger/script data.
+                const storedSharedId = localStorage.getItem(API_CONFIG.STORAGE_KEYS.SHARED_SET);
+                const storedSharedSet = sets.find(s => s.id === storedSharedId);
+                sharedSetId = (storedSharedSet || defaultSet).id;
+                localStorage.setItem(API_CONFIG.STORAGE_KEYS.SHARED_SET, sharedSetId);
 
                 if (justLoggedIn) {
                     // Fresh login — ALWAYS pull cloud data (cloud wins)

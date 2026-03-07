@@ -9,6 +9,7 @@ export default defineConfig({
     assetsInlineLimit: 100000000, // Inline everything
     cssCodeSplit: false,
     rollupOptions: {
+      treeshake: false,
       output: {
         inlineDynamicImports: true,
       }
