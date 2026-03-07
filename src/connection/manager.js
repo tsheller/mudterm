@@ -396,7 +396,10 @@ class ConnectionManager {
                 this._handleTelnetFrame(event.data);
                 break;
             case SUBPROTOCOLS.TERMINAL:
-                this._handleTextFrame(event.data);
+                // If the relay sends binary frames despite not negotiating a
+                // mudstandards subprotocol, the data contains raw telnet bytes —
+                // run through the state machine rather than dumping as raw text.
+                isBinary ? this._handleTelnetFrame(event.data) : this._handleTextFrame(event.data);
                 break;
             case SUBPROTOCOLS.GMCP:
                 // Per mudstandards.org spec: BINARY frames = ANSI terminal text, TEXT frames = GMCP data
@@ -409,7 +412,9 @@ class ConnectionManager {
                 isBinary ? this._handleJSONBinaryFrame(event.data) : this._handleTextFrame(event.data);
                 break;
             default:
-                this._handleTextFrame(event.data);
+                // Unknown/custom subprotocol (e.g. "binary", server-specific strings).
+                // Binary frames are a raw telnet tunnel — parse them. Text frames pass through.
+                isBinary ? this._handleTelnetFrame(event.data) : this._handleTextFrame(event.data);
         }
     }
 
